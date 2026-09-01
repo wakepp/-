@@ -60,7 +60,7 @@ jobs:
           PROVISIONING_PROFILE_SPECIFIER="" \
           PROVISIONING_PROFILE=""
 
-    - name: 打包 IPA（彻底清除签名残留）
+    - name: 打包 IPA（打包后直接从 ZIP 里删签名）
       run: |
         APP_ROOT="build/Build/Products/Release-iphoneos"
         APP_DIR=$(ls -d "$APP_ROOT"/*.app | head -n 1)
@@ -70,23 +70,6 @@ jobs:
         rm -rf Payload command-helper.ipa
         mkdir -p Payload
         cp -R "$APP_DIR" Payload/
-
-        # ★ 彻底清除所有签名残留
-        echo "--- 清除签名残留 ---"
-        find Payload -name '_CodeSignature' -exec rm -rf {} + 2>/dev/null || true
-        find Payload -name '*.mobileprovision' -delete 2>/dev/null || true
-        find Payload -name '*.entitlements' -delete 2>/dev/null || true
-
-        # 用 codesign 强制移除所有签名
-        if command -v codesign &>/dev/null; then
-          echo "移除代码签名..."
-          find Payload -type f \( -name '*.dylib' -o -name '*.framework' -o -perm +111 \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
-            codesign --remove-signature "$f" 2>/dev/null || true
-          done
-          codesign --remove-signature Payload/*.app 2>/dev/null || true
-          # 再删一次可能生成的新 _CodeSignature
-          find Payload -name '_CodeSignature' -exec rm -rf {} + 2>/dev/null || true
-        fi
 
         # 确保可执行权限
         APP_PATH=$(ls -d Payload/*.app | head -n 1)
@@ -99,25 +82,20 @@ jobs:
         # 清除 macOS 扩展属性
         xattr -rc Payload 2>/dev/null || true
 
-        # 打包
+        # 先全部打包（签名残留没关系，之后直接从 zip 里删）
         zip -r -X -q command-helper.ipa Payload -x "*.DS_Store" "__MACOSX*"
 
-        # 结构自检
-        unzip -l command-helper.ipa | head -n 10
-        ls -lh command-helper.ipa
+        # ★ 暴力：打包完后直接从 zip 里删除所有签名相关文件
+        echo "--- 从 zip 中删除签名残留 ---"
+        zip -d command-helper.ipa "*_CodeSignature*" 2>/dev/null || true
+        zip -d command-helper.ipa "*.mobileprovision" 2>/dev/null || true
+        zip -d command-helper.ipa "*.entitlements" 2>/dev/null || true
+        echo "删除完成"
 
-        echo "--- 签名残留检查 ---"
-        if unzip -l command-helper.ipa | grep -qi 'codesignature'; then
-          echo "⚠️ 仍有 _CodeSignature 残留！"
-          unzip -l command-helper.ipa | grep -i codesignature
-        else
-          echo "✓ 无 _CodeSignature"
-        fi
-        if unzip -l command-helper.ipa | grep -qi 'mobileprovision'; then
-          echo "⚠️ 仍有 mobileprovision！"
-        else
-          echo "✓ 无 mobileprovision"
-        fi
+        # 验证
+        echo "--- 最终验证 ---"
+        unzip -l command-helper.ipa | grep -i 'codesignature\|mobileprovision\|entitlements' || echo "✓ 无任何签名残留"
+        ls -lh command-helper.ipa
 
     - name: 上传 IPA 到 Artifacts
       uses: actions/upload-artifact@v4
