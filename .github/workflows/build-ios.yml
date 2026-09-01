@@ -44,47 +44,65 @@ jobs:
         echo "应用名: $APP_NAME"
         echo "Bundle ID: $APP_ID"
 
-    - name: 编译 iOS 应用（Ad-hoc 签名，全能签/轻松签重签兼容）
+    - name: 编译 iOS 应用（完全无签名，兼容第三方工具重签）
       run: |
         xcodebuild -workspace "ios/App/App.xcworkspace" \
           -scheme "App" \
           -sdk iphoneos \
           -configuration Release \
           -derivedDataPath build \
-          CODE_SIGN_IDENTITY="-" \
           CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGNING_ALLOWED=YES \
-          AD_HOC_CODE_SIGNING_ALLOWED=YES \
-          PRODUCT_BUNDLE_IDENTIFIER="${{ steps.config.outputs.appId }}" \
-          DEVELOPMENT_TEAM="" \
-          PROVISIONING_PROFILE_SPECIFIER="" \
-          PROVISIONING_PROFILE=""
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGN_IDENTITY="" \
+          PRODUCT_BUNDLE_IDENTIFIER="${{ steps.config.outputs.appId }}"
 
-    - name: 打包 IPA
+    - name: 打包 IPA（清除所有签名残留）
       run: |
         APP_ROOT="build/Build/Products/Release-iphoneos"
         APP_DIR=$(ls -d "$APP_ROOT"/*.app | head -n 1)
         echo "App 目录: $APP_DIR"
 
-        # 确保可执行权限
-        EXE_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_DIR/Info.plist")
-        chmod +x "$APP_DIR/$EXE_NAME"
-        if [ -d "$APP_DIR/Frameworks" ]; then
-          find "$APP_DIR/Frameworks" -type f \( -name "*.dylib" -o -perm -u+x -name "*" \) -exec chmod +x {} \; 2>/dev/null || true
-        fi
-
-        # 清除 macOS 扩展属性
-        xattr -rc "$APP_DIR" 2>/dev/null || true
-
-        # 打包（英文文件名 + 无额外属性）
+        # 复制到 Payload
         rm -rf Payload command-helper.ipa
         mkdir -p Payload
         cp -R "$APP_DIR" Payload/
+
+        # ★ 关键：清除所有签名残留，让爱思/AltStore 能干净重签
+        echo "--- 清除签名残留 ---"
+        # 清除所有 _CodeSignature 目录
+        find Payload -name '_CodeSignature' -type d -exec rm -rf {} + 2>/dev/null || true
+        # 清除所有 embedded.mobileprovision
+        find Payload -name '*.mobileprovision' -delete 2>/dev/null || true
+        # 清除所有 .entitlements
+        find Payload -name '*.entitlements' -delete 2>/dev/null || true
+        # 清除可执行文件上的旧签名
+        if command -v codesign &>/dev/null; then
+          find Payload -type f -name '*.dylib' -exec codesign --remove-signature {} \; 2>/dev/null || true
+          find Payload -type f -perm +111 -exec codesign --remove-signature {} \; 2>/dev/null || true
+          codesign --remove-signature Payload/*.app 2>/dev/null || true
+        fi
+
+        # 确保可执行权限
+        APP_PATH=$(ls -d Payload/*.app | head -n 1)
+        EXE_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist")
+        chmod +x "$APP_PATH/$EXE_NAME"
+        if [ -d "$APP_PATH/Frameworks" ]; then
+          find "$APP_PATH/Frameworks" -type f \( -name "*.dylib" -o -perm -u+x \) -exec chmod +x {} \; 2>/dev/null || true
+        fi
+
+        # 清除 macOS 扩展属性
+        xattr -rc Payload 2>/dev/null || true
+
+        # 打包
         zip -r -X -q command-helper.ipa Payload -x "*.DS_Store" "__MACOSX*"
 
         # 结构自检
         unzip -l command-helper.ipa | head -n 8
         ls -lh command-helper.ipa
+
+        # 验证无签名残留
+        echo "--- 验证签名残留（应为空）---"
+        unzip -l command-helper.ipa | grep -i 'codesignature\|mobileprovision\|entitlements' || echo "无残留 ✓"
 
     - name: 上传 IPA 到 Artifacts
       uses: actions/upload-artifact@v4
