@@ -106,9 +106,9 @@ html, body {
 
 .cmd-btn {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 3px;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
     width: 100%;
     padding: 10px 14px;
     background: rgba(255, 255, 255, 0.05);
@@ -134,16 +134,21 @@ html, body {
 }
 
 .cmd-syntax {
-    font-size: 13px;
+    flex: 1;
+    min-width: 0;
+    font-size: 14px;
     color: #cfd8cf;
     font-family: "SF Mono", Menlo, Consolas, monospace;
-    word-break: break-all;
-    line-height: 1.45;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .cmd-desc {
+    flex-shrink: 0;
     font-size: 12px;
-    color: #8f9b8f;
+    color: #7a887a;
+    white-space: nowrap;
 }
 
 .empty-tip {

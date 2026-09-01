@@ -41,16 +41,6 @@
         <div class="settings-box">
             <h3>⚙ 设置</h3>
 
-            <!-- 横屏/竖屏切换 -->
-            <div class="setting-row">
-                <label>屏幕方向</label>
-                <div class="seg-group">
-                    <button class="seg-btn" data-orient="auto">自动</button>
-                    <button class="seg-btn" data-orient="portrait">竖屏</button>
-                    <button class="seg-btn" data-orient="landscape">横屏</button>
-                </div>
-            </div>
-
             <!-- 检查更新 -->
             <div class="setting-row">
                 <label>应用更新</label>
@@ -153,38 +143,34 @@
             });
         }
 
-        // 横屏/竖屏切换逻辑
-        document.addEventListener('DOMContentLoaded', function() {
-            const savedOrient = localStorage.getItem('mch.orientation') || 'auto';
-            applyOrientation(savedOrient);
-            updateSegButtons(savedOrient);
-
-            document.querySelectorAll('.seg-btn[data-orient]').forEach(function(btn) {
-                btn.addEventListener('click', function() {
-                    const orient = btn.dataset.orient;
-                    localStorage.setItem('mch.orientation', orient);
-                    applyOrientation(orient);
-                    updateSegButtons(orient);
+        // visualViewport 监听：键盘弹出时调整可视区
+        function initViewport() {
+            const panel = document.getElementById('panel');
+            if ('visualViewport' in window) {
+                window.visualViewport.addEventListener('resize', function() {
+                    // 键盘弹出时 offsetTop 变大，height 变小
+                    const vv = window.visualViewport;
+                    const heightOffset = window.innerHeight - vv.height;
+                    if (heightOffset > 50) {
+                        // 键盘弹出：用 visualViewport 的高度
+                        panel.style.height = vv.height + 'px';
+                        panel.style.top = vv.offsetTop + 'px';
+                    } else {
+                        // 键盘收起：恢复全屏
+                        panel.style.height = '';
+                        panel.style.top = '';
+                    }
                 });
-            });
-        });
-
-        function applyOrientation(orient) {
-            const html = document.documentElement;
-            html.classList.remove('orient-auto', 'orient-portrait', 'orient-landscape');
-            html.classList.add('orient-' + orient);
-
-            // iOS PWA 无法强制锁定方向，但可以通过 CSS 提示
-            if (orient !== 'auto') {
-                // 用户需要在系统层面旋转设备
+                window.visualViewport.addEventListener('scroll', function() {
+                    const vv = window.visualViewport;
+                    const heightOffset = window.innerHeight - vv.height;
+                    if (heightOffset > 50) {
+                        panel.style.top = vv.offsetTop + 'px';
+                    }
+                });
             }
         }
-
-        function updateSegButtons(current) {
-            document.querySelectorAll('.seg-btn[data-orient]').forEach(function(btn) {
-                btn.classList.toggle('active', btn.dataset.orient === current);
-            });
-        }
+        document.addEventListener('DOMContentLoaded', initViewport);
     </script>
 </body>
 </html>
