@@ -60,13 +60,12 @@ jobs:
           PROVISIONING_PROFILE_SPECIFIER="" \
           PROVISIONING_PROFILE=""
 
-    - name: 打包 IPA（打包后直接从 ZIP 里删签名）
+    - name: 打包 IPA（解压→删签名→重打包）
       run: |
         APP_ROOT="build/Build/Products/Release-iphoneos"
         APP_DIR=$(ls -d "$APP_ROOT"/*.app | head -n 1)
         echo "App 目录: $APP_DIR"
 
-        # 复制到 Payload
         rm -rf Payload command-helper.ipa
         mkdir -p Payload
         cp -R "$APP_DIR" Payload/
@@ -75,27 +74,62 @@ jobs:
         APP_PATH=$(ls -d Payload/*.app | head -n 1)
         EXE_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist")
         chmod +x "$APP_PATH/$EXE_NAME"
-        if [ -d "$APP_PATH/Frameworks" ]; then
-          find "$APP_PATH/Frameworks" -type f \( -name "*.dylib" -o -perm -u+x \) -exec chmod +x {} \; 2>/dev/null || true
-        fi
+        [ -d "$APP_PATH/Frameworks" ] && find "$APP_PATH/Frameworks" -type f -exec chmod +x {} \; 2>/dev/null || true
 
-        # 清除 macOS 扩展属性
         xattr -rc Payload 2>/dev/null || true
 
-        # 先全部打包（签名残留没关系，之后直接从 zip 里删）
+        # ====== 关键：在文件系统上彻底删除签名 ======
+        echo "=== 第一步：文件系统层删除 ==="
+        find Payload -type d -name '_CodeSignature' -print -exec rm -rf {} + 2>/dev/null || true
+        find Payload -type f -name '*.mobileprovision' -print -delete 2>/dev/null || true
+        find Payload -type f -name '*.entitlements' -print -delete 2>/dev/null || true
+
+        # ====== 第二步：打包成 zip ======
         zip -r -X -q command-helper.ipa Payload -x "*.DS_Store" "__MACOSX*"
+        echo "打包完成"
 
-        # ★ 暴力：打包完后直接从 zip 里删除所有签名相关文件
-        echo "--- 从 zip 中删除签名残留 ---"
-        zip -d command-helper.ipa "*_CodeSignature*" 2>/dev/null || true
-        zip -d command-helper.ipa "*.mobileprovision" 2>/dev/null || true
-        zip -d command-helper.ipa "*.entitlements" 2>/dev/null || true
-        echo "删除完成"
+        # ====== 第三步：解压到临时目录验证并二次删除 ======
+        echo "=== 解压验证 ==="
+        rm -rf verify_dir
+        mkdir verify_dir
+        cd verify_dir
+        unzip -q ../command-helper.ipa
+        echo "解压目录结构:"
+        ls -la Payload/
+        ls -la Payload/*.app/
+        echo "--- 再删一遍 ---"
+        find . -type d -name '_CodeSignature' -print -exec rm -rf {} + 2>/dev/null || true
+        find . -type f -name '*.mobileprovision' -print -delete 2>/dev/null || true
+        find . -type f -name '*.entitlements' -print -delete 2>/dev/null || true
+        echo "--- codesign remove ---"
+        codesign --remove-signature Payload/*.app 2>/dev/null || true
+        find Payload -type f -name '*.dylib' -exec codesign --remove-signature {} \; 2>/dev/null || true
 
-        # 验证
-        echo "--- 最终验证 ---"
-        unzip -l command-helper.ipa | grep -i 'codesignature\|mobileprovision\|entitlements' || echo "✓ 无任何签名残留"
+        # ====== 第四步：重新打包干净的 IPA ======
+        rm -f ../command-helper.ipa
+        zip -r -X -q ../command-helper.ipa Payload -x "*.DS_Store" "__MACOSX*"
+        cd ..
+        rm -rf verify_dir Payload
+
+        # ====== 第五步：最终验证 ======
+        echo "=== 最终验证 ==="
+        echo "文件大小:"
         ls -lh command-helper.ipa
+        echo "zip 内容检查:"
+        unzip -l command-helper.ipa | head -n 20
+        echo ""
+        if unzip -l command-helper.ipa | grep -qi 'codesignature'; then
+          echo "❌ 仍有 _CodeSignature！"
+          exit 1
+        else
+          echo "✅ 无 _CodeSignature"
+        fi
+        if unzip -l command-helper.ipa | grep -qi 'mobileprovision'; then
+          echo "❌ 仍有 mobileprovision！"
+          exit 1
+        else
+          echo "✅ 无 mobileprovision"
+        fi
 
     - name: 上传 IPA 到 Artifacts
       uses: actions/upload-artifact@v4
