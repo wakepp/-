@@ -1,0 +1,447 @@
+/* ===== 全局 ===== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+:root {
+    --accent: #55ff55;
+    --accent-dim: #3fbf3f;
+    --panel-alpha: 0.95;
+    --panel-bg: rgba(24, 26, 28, var(--panel-alpha));
+    --panel-border: rgba(85, 255, 85, var(--panel-alpha));
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #121214;
+    color: #e8e8e8;
+}
+
+/* 背景装饰：暗色像素网格 */
+#bg-pattern {
+    position: fixed;
+    inset: 0;
+    background:
+        radial-gradient(ellipse at 30% 20%, #1c2b1c 0%, transparent 55%),
+        radial-gradient(ellipse at 75% 80%, #1a232b 0%, transparent 55%),
+        repeating-linear-gradient(0deg, transparent 0 39px, rgba(255,255,255,0.018) 39px 40px),
+        repeating-linear-gradient(90deg, transparent 0 39px, rgba(255,255,255,0.018) 39px 40px),
+        #121214;
+    z-index: 0;
+}
+
+/* ===== 悬浮球（最上层） ===== */
+#float-ball {
+    position: fixed;
+    top: 60%;
+    right: 16px;
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #6fef6f, #2f9f2f 55%, #1c6b1c);
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    box-shadow: 0 4px 18px rgba(85, 255, 85, 0.35), inset 0 -4px 8px rgba(0,0,0,0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999; /* 永远在大窗口之上 */
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: box-shadow 0.15s, transform 0.1s;
+}
+
+#float-ball:active {
+    cursor: grabbing;
+    transform: scale(0.94);
+    box-shadow: 0 2px 10px rgba(85, 255, 85, 0.5), inset 0 -4px 8px rgba(0,0,0,0.4);
+}
+
+#float-ball .ball-icon {
+    font-size: 26px;
+    color: #0d2b0d;
+    font-weight: 900;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.3);
+    pointer-events: none;
+}
+
+/* ===== 大窗口 ===== */
+#panel {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) scale(0.9);
+    width: min(94vw, 720px);
+    height: min(80vh, 680px);
+    background: var(--panel-bg);
+    border: 2px solid var(--panel-border);
+    border-radius: 14px;
+    box-shadow: 0 10px 50px rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    display: flex;
+    flex-direction: column;
+    z-index: 1000; /* 低于悬浮球 */
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+#panel.open {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+    pointer-events: auto;
+}
+
+/* 顶部 */
+#panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(85, 255, 85, 0.25);
+    flex-shrink: 0;
+}
+
+.panel-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 2px;
+    text-shadow: 0 0 10px rgba(85, 255, 85, 0.35);
+}
+
+#match-count {
+    font-size: 12px;
+    color: #9aa89a;
+}
+
+/* ===== 命令列表 ===== */
+#cmd-list {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cmd-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    width: 100%;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(85, 255, 85, 0.18);
+    border-radius: 8px;
+    color: #e8e8e8;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.cmd-btn:active {
+    background: rgba(85, 255, 85, 0.16);
+    border-color: var(--accent);
+}
+
+.cmd-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--accent);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+}
+
+.cmd-syntax {
+    font-size: 13px;
+    color: #cfd8cf;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    word-break: break-all;
+    line-height: 1.45;
+}
+
+.cmd-desc {
+    font-size: 12px;
+    color: #8f9b8f;
+}
+
+.empty-tip {
+    text-align: center;
+    color: #6b756b;
+    padding: 40px 0;
+    font-size: 14px;
+}
+
+/* 高亮匹配字符 */
+.cmd-syntax mark, .cmd-name mark {
+    background: transparent;
+    color: #ffe066;
+    font-weight: 700;
+}
+
+/* ===== 底部输入栏 ===== */
+#panel-footer {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid rgba(85, 255, 85, 0.25);
+    flex-shrink: 0;
+    align-items: center;
+}
+
+.foot-btn {
+    flex-shrink: 0;
+    min-width: 44px;
+    height: 44px;
+    padding: 0 12px;
+    font-size: 16px;
+    background: linear-gradient(180deg, #4a4f4a, #333833);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 8px;
+    color: #e8e8e8;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.foot-btn:active {
+    background: linear-gradient(180deg, #3a3f3a, #2a2f2a);
+}
+
+.foot-btn.copy {
+    color: var(--accent);
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+#cmd-input {
+    flex: 1;
+    height: 44px;
+    padding: 0 14px;
+    font-size: 16px; /* >=16px 防止 iOS 聚焦自动放大 */
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(85, 255, 85, 0.3);
+    border-radius: 8px;
+    color: #ffe066;
+    outline: none;
+}
+
+#cmd-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(85, 255, 85, 0.15);
+}
+
+/* ===== 设置弹窗 ===== */
+#settings-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9998; /* 仍低于悬浮球 */
+}
+
+#settings-modal.open {
+    display: flex;
+}
+
+.settings-box {
+    width: min(88vw, 380px);
+    background: #1d2022;
+    border: 2px solid var(--accent-dim);
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.settings-box h3 {
+    color: var(--accent);
+    font-size: 17px;
+    letter-spacing: 2px;
+    text-align: center;
+}
+
+.setting-row label {
+    display: block;
+    font-size: 14px;
+    color: #cfd8cf;
+    margin-bottom: 8px;
+}
+
+.slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+input[type="range"] {
+    flex: 1;
+    height: 28px;
+    -webkit-appearance: none;
+    background: transparent;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.15);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 22px;
+    height: 22px;
+    margin-top: -8px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid #0d2b0d;
+    cursor: pointer;
+}
+
+.slider-val {
+    min-width: 44px;
+    text-align: right;
+    font-size: 13px;
+    color: var(--accent);
+    font-family: monospace;
+}
+
+.setting-tip {
+    font-size: 12px;
+    color: #79857a;
+    text-align: center;
+}
+
+.mc-btn {
+    padding: 12px;
+    font-size: 15px;
+    background: linear-gradient(180deg, #6fef6f, #2f9f2f);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    color: #0d2b0d;
+    font-weight: 800;
+    letter-spacing: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    box-shadow: inset 0 -3px 0 rgba(0,0,0,0.25);
+}
+
+.mc-btn:active {
+    transform: translateY(1px);
+}
+
+/* ===== Toast ===== */
+#toast {
+    position: fixed;
+    left: 50%;
+    bottom: 18%;
+    transform: translateX(-50%) translateY(10px);
+    background: rgba(20, 24, 20, 0.92);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 10px 22px;
+    border-radius: 8px;
+    font-size: 14px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s, transform 0.25s;
+    z-index: 10001;
+}
+
+#toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* ===== 滚动条 ===== */
+#cmd-list::-webkit-scrollbar {
+    width: 5px;
+}
+
+#cmd-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#cmd-list::-webkit-scrollbar-thumb {
+    background: rgba(85, 255, 85, 0.25);
+    border-radius: 3px;
+}
+
+/* ===== 参数槽条（当前命令结构） ===== */
+#cmd-slots {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 14px;
+    border-bottom: 1px solid rgba(85, 255, 85, 0.15);
+    flex-shrink: 0;
+}
+
+#cmd-slots.show { display: flex; }
+
+.slot {
+    padding: 3px 10px;
+    font-size: 12px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #9aa89a;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.slot.done {
+    color: #6b756b;
+    border-color: rgba(255, 255, 255, 0.08);
+    text-decoration: line-through;
+}
+
+.slot.cur {
+    color: #ffe066;
+    border-color: #ffe066;
+    background: rgba(255, 224, 102, 0.08);
+    text-decoration: none;
+    animation: slotPulse 1.2s infinite;
+}
+
+@keyframes slotPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 224, 102, 0.25); }
+    50% { box-shadow: 0 0 0 4px rgba(255, 224, 102, 0.1); }
+}
+
+/* ===== 追加：命令名称行 + 分类徽标 ===== */
+.cmd-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.cmd-cat {
+    padding: 1px 8px;
+    font-size: 11px;
+    line-height: 18px;
+    border: 1px solid rgba(85, 255, 85, 0.35);
+    border-radius: 999px;
+    color: #9fd89f;
+    background: rgba(85, 255, 85, 0.08);
+    font-family: -apple-system, "PingFang SC", sans-serif;
+}
+
+/* 悬浮球松手吸附边缘的过渡动画 */
+#float-ball.snapping {
+    transition: left 0.22s ease, top 0.22s ease, box-shadow 0.15s, transform 0.1s;
+}

@@ -1,0 +1,14 @@
+{
+  "appId": "com.mc.commandhelper",
+  "appName": "命令助手",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#121214",
+    "scheme": "mchelper"
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
