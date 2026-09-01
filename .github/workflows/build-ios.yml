@@ -70,91 +70,112 @@ jobs:
         echo "Frameworks 内容:"
         [ -d "$APP_DIR/Frameworks" ] && ls -la "$APP_DIR/Frameworks" || echo "(无 Frameworks)"
 
-        # ====== 用 Python 重写 IPA，彻底清除签名 ======
+        # ====== 用 Python 重写 IPA，彻底清除所有层级签名 ======
         echo ""
         echo "=== Python 重写 IPA ==="
         python3 << 'PYEOF'
-import os, zipfile, io, shutil
+import os, zipfile, glob, sys
 
-app_dir = os.environ.get("APP_DIR", None)
-if not app_dir:
-    import sys
-    # Fallback
-    import glob
-    app_dir = glob.glob("build/Build/Products/Release-iphoneos/*.app")[0]
-
+# 找到 .app 目录
+app_dirs = glob.glob("build/Build/Products/Release-iphoneos/*.app")
+if not app_dirs:
+    print("❌ 找不到 .app 目录!")
+    sys.exit(1)
+app_dir = app_dirs[0]
 print(f"App 目录: {app_dir}")
 
-# 收集所有要打包的文件，过滤签名相关
-files_to_add = []
-skip_count = 0
-
-for root, dirs, files in os.walk(app_dir):
-    # 跳过整个 _CodeSignature 目录
-    if '_CodeSignature' in root.split(os.sep):
-        print(f"  SKIP DIR: {root}")
-        dirs[:] = []
-        skip_count += 1
-        continue
-    
+# 先打印完整目录树让我们知道有什么签名
+print("\n=== 扫描所有 _CodeSignature ===")
+for root, dirs, files in os.walk(app_dir, followlinks=False):
     for d in dirs:
         if d == '_CodeSignature':
-            print(f"  SKIP DIR: {os.path.join(root, d)}")
-            dirs.remove(d)
-            skip_count += 1
+            full = os.path.join(root, d)
+            print(f"  找到: {full}")
+    for f in files:
+        if f.endswith('.mobileprovision') or f.endswith('.entitlements'):
+            print(f"  找到: {os.path.join(root, f)}")
+
+# 收集文件，严格过滤
+files_to_add = []
+skip_count = 0
+SKIP_DIR_NAMES = {'_CodeSignature', '__MACOSX'}
+SKIP_FILE_EXTS = ('.mobileprovision', '.entitlements')
+
+for root, dirs, files in os.walk(app_dir, followlinks=False):
+    # 从 dirs 里移除所有 _CodeSignature 和相关
+    dirs[:] = [d for d in dirs if d not in SKIP_DIR_NAMES]
     
     for f in files:
         full = os.path.join(root, f)
+        # 计算相对于 Payload 的路径
         rel = os.path.relpath(full, os.path.dirname(app_dir))
+        zip_path = "Payload/" + os.path.basename(app_dir) + "/" + os.path.relpath(full, app_dir).replace(os.sep, '/')
         
         # 跳过签名文件
-        if f.endswith('.mobileprovision'):
-            print(f"  SKIP: {rel}")
-            skip_count += 1
-            continue
-        if f.endswith('.entitlements'):
-            print(f"  SKIP: {rel}")
+        if f.endswith(SKIP_FILE_EXTS):
+            print(f"  SKIP FILE: {rel}")
             skip_count += 1
             continue
         
-        files_to_add.append((rel, full))
+        # 安全检查：路径里不能有 _CodeSignature
+        if '_CodeSignature' in rel.replace(os.sep, '/'):
+            print(f"  SKIP DIR CONTENT: {rel}")
+            skip_count += 1
+            continue
+        
+        files_to_add.append((zip_path, full))
 
 print(f"\n跳过了 {skip_count} 个签名相关文件/目录")
-print(f"添加 {len(files_to_add)} 个文件到新 IPA")
+print(f"准备添加 {len(files_to_add)} 个文件")
 
-# 打包新 IPA
-os.makedirs("Payload_tmp", exist_ok=True)
+# 打包
 ipa_path = "command-helper.ipa"
+# 如果已经存在旧文件，先删掉
+if os.path.exists(ipa_path):
+    os.remove(ipa_path)
 
 with zipfile.ZipFile(ipa_path, "w", zipfile.ZIP_DEFLATED) as zf:
-    for rel, full in files_to_add:
-        zf.write(full, rel)
+    # 必须先写 __MACOSX 目录（空的），这样解压到 Payload/xxx.app 结构正确
+    for zip_path, full_path in files_to_add:
+        zf.write(full_path, zip_path)
 
-print(f"\n✅ 新 IPA 写入: {ipa_path} ({os.path.getsize(ipa_path)} bytes)")
+print(f"\n✅ IPA 写入: {ipa_path} ({os.path.getsize(ipa_path)} bytes)")
 
-# 验证
-print("\n=== 验证新 IPA 内容 ===")
+# 暴力验证
+print("\n=== 验证 ===")
 with zipfile.ZipFile(ipa_path, "r") as zf:
     names = zf.namelist()
     
-    # 检查残留
     has_cs = any("_CodeSignature" in n for n in names)
     has_mp = any(".mobileprovision" in n for n in names)
-    has_dy = any(".dylib" in n for n in names)
-    has_info = any("Info.plist" in n for n in names)
+    has_ent = any(".entitlements" in n for n in names)
+    has_info = any("Info.plist" in n for n in names and n.endswith("Info.plist"))
+    dylib_count = sum(1 for n in names if n.endswith(".dylib"))
     
-    print(f"  总文件数: {len(names)}")
-    print(f"  _CodeSignature:    {'❌ 仍有!' if has_cs else '✅ 无'}")
-    print(f"  mobileprovision:   {'❌ 仍有!' if has_mp else '✅ 无'}")
-    print(f"  Info.plist:        {'✅ 存在' if has_info else '❌ 缺失!'}")
-    print(f"  .dylib 数量:       {sum(1 for n in names if '.dylib' in n)}")
-    print(f"  .framework 数量:   {sum(1 for n in names if '.framework/' in n)}")
+    print(f"  总文件: {len(names)}")
+    print(f"  _CodeSignature:    {'❌❌❌ 还有!' if has_cs else '✅ 干净'}")
+    print(f"  mobileprovision:   {'❌❌❌ 还有!' if has_mp else '✅ 干净'}")
+    print(f"  entitlements:      {'❌❌❌ 还有!' if has_ent else '✅ 干净'}")
+    print(f"  Info.plist:        {'✅ 存在' if has_info else '❌❌❌ 缺失!'}")
+    print(f"  .dylib:            {dylib_count} 个")
     
-    if has_cs or has_mp:
-        print("\n❌❌❌ 还有残留！构建失败！")
+    # 如果不干净，打印所有残留
+    if has_cs:
+        print("\n  残留的 _CodeSignature 路径:")
+        for n in names:
+            if '_CodeSignature' in n:
+                print(f"    {n}")
+    if has_mp:
+        print("\n  残留的 mobileprovision:")
+        for n in names:
+            if '.mobileprovision' in n:
+                print(f"    {n}")
+    
+    if has_cs or has_mp or not has_info:
+        print("\n❌❌❌ 构建产物不干净！已拒绝！")
         sys.exit(1)
     else:
-        print("\n✅✅✅ 无任何签名残留！")
+        print("\n✅✅✅ 所有签名残留已清除！")
 
 PYEOF
         echo ""
