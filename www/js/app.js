@@ -9,8 +9,6 @@
     "use strict";
 
     // ---------- DOM ----------
-    const ball = document.getElementById("float-ball");
-    const panel = document.getElementById("panel");
     const cmdList = document.getElementById("cmd-list");
     const cmdSlots = document.getElementById("cmd-slots");
     const cmdInput = document.getElementById("cmd-input");
@@ -20,14 +18,8 @@
     const btnSettings = document.getElementById("btn-settings");
     const settingsModal = document.getElementById("settings-modal");
     const btnCloseSettings = document.getElementById("btn-close-settings");
-    const ballAlpha = document.getElementById("ball-alpha");
-    const panelAlpha = document.getElementById("panel-alpha");
-    const ballAlphaVal = document.getElementById("ball-alpha-val");
-    const panelAlphaVal = document.getElementById("panel-alpha-val");
     const toast = document.getElementById("toast");
 
-    const K = { pos: "mch.ball.pos", ballA: "mch.ball.alpha", panelA: "mch.panel.alpha" };
-    let panelOpen = false;
     let toastTimer = null;
 
     // ---------- 基础工具 ----------
@@ -85,20 +77,18 @@
     }
 
     // ---------- 参数消耗状态机 ----------
-    // 返回 { idx: 当前参数下标(可能=p.length表示全部完成), rest: 剩余未消耗token }
     function walk(params, toks) {
         let i = 0, pi = 0;
         while (i < toks.length && pi < params.length) {
             const p = params[pi], tok = toks[i];
             if (p.t === "exec") {
-                // 找 run：run 后的 token 由外层递归处理，这里直接停在 exec
                 return { idx: pi, rest: toks.slice(i), execTok: toks.slice(i) };
             }
             if (p.t === "literal" || p.t === "enum") {
                 const vals = getList(p).map(v => v[0]);
                 if (vals.indexOf(tok) >= 0) { i++; pi++; }
-                else if (p.o) pi++;            // 跳过可选参数
-                else return { idx: pi, rest: toks.slice(i) }; // 停在必填参数
+                else if (p.o) pi++;
+                else return { idx: pi, rest: toks.slice(i) };
             } else if (p.t === "position" || p.t === "dest") {
                 if (isCoord(tok)) {
                     let n = 0;
@@ -106,22 +96,20 @@
                     pi++;
                 } else if (p.t === "dest" && (isSel(tok) || true)) { i++; pi++; }
                 else if (p.o) pi++;
-                else { i++; pi++; }            // 宽松：吃掉当完成
+                else { i++; pi++; }
             } else if (p.t === "message" || p.t === "text") {
-                i = toks.length; pi++;         // 吃掉剩余全部
+                i = toks.length; pi++;
             } else {
-                i++; pi++;                     // selector/item/int/bool... 一词一参数
+                i++; pi++;
             }
         }
         return { idx: pi, rest: [] };
     }
 
     // ---------- 候选生成 ----------
-    // 每个候选 { l: 主文本, d: 描述, v: 插入值(完整输入栏新值) }
     let cands = [];
-    let doneStr = "";   // 已完成词串（插入前缀）
+    let doneStr = "";
 
-    // c[0]=显示值 c[1]=描述 c[2]=插入词(不含doneStr前缀) c[3]=尾缀：undefined→空格 0→无 字符串→原样
     function mkCands(list) {
         return list.map(c => {
             const tail = c[3] === 0 ? "" : (c[3] === undefined ? " " : c[3]);
@@ -129,7 +117,6 @@
         });
     }
 
-    // 选择器子状态机：cur 如 @a / @a[ / @a[x / @a[x= / @a[x=4 / @a[x=4,
     function selCands(cur) {
         if (!cur || cur === "@") {
             return mkCands(SELECTORS.map(s => [s[0], s[1], s[0]]));
@@ -144,16 +131,14 @@
             if (/^@[a-zA-Z]$/.test(cur)) out.push(["[...", "插入选择器参数", cur + "[", 0]);
             return mkCands(out);
         }
-        // 有 [ ：解析内部
-        const inner = m[2]; // [ 之后内容
+        const inner = m[2];
         const parts = inner.split(",");
         const last = parts[parts.length - 1];
         const usedKeys = {};
         parts.slice(0, -1).forEach(pt => { const k = pt.split("=")[0]; if (k) usedKeys[k] = 1; });
-        const base = cur.slice(0, cur.length - last.length); // 含 @a[ 及之前参数,
+        const base = cur.slice(0, cur.length - last.length);
 
         if (last.indexOf("=") < 0) {
-            // 等键名
             const q = last.toLowerCase();
             const out = SEL_PARAMS
                 .filter(sp => !usedKeys[sp[0]] && (!q || sp[0].indexOf(q) >= 0))
@@ -164,7 +149,6 @@
         const eq = last.indexOf("=");
         const key = last.slice(0, eq), val = last.slice(eq + 1);
         if (val === "") {
-            // 等值候选（尾缀均为无，继续等值后续）
             let vs = [];
             if (key === "type") vs = ENTITY_TYPES.map(v => [v[0], v[1]]);
             else if (key === "m") vs = [["0", "生存"], ["1", "创造"], ["2", "冒险"], ["3", "观察者"]];
@@ -175,14 +159,12 @@
             else vs = [["(手输)", "输入" + key + " 的值"]];
             return mkCands(vs.map(v => [v[0], v[1], base + key + "=" + v[0], 0]));
         }
-        // 值已输入："," 或 "]"
         return mkCands([
             [",", "下一个参数", cur + ",", 0],
             ["]", "结束参数", cur + "]", " "]
         ]);
     }
 
-    // 普通参数候选
     function paramCands(p, cur) {
         const q = (cur || "").toLowerCase();
         let out = [];
@@ -235,16 +217,13 @@
     }
 
     // ---------- 命令解析主入口 ----------
-    // 预排序：token 数多的键优先（最长前缀匹配）
     const SORTED_KEYS = Object.keys(CTREE)
         .sort((a, b) => b.split(" ").length - a.split(" ").length || a.localeCompare(b));
 
     function resolve(done, cur, alreadyStr) {
-        // alreadyStr: exec run 之前的完整前缀
         const joined = done.join(" ");
         doneStr = [alreadyStr || "", joined].filter(Boolean).join(" ");
 
-        // 1. 最长前缀匹配：命令键的 token 序列是 done 的前缀，剩余为参数
         for (const key of SORTED_KEYS) {
             const kt = key.split(" ");
             if (done.length >= kt.length &&
@@ -255,10 +234,8 @@
                 if (w.execTok) {
                     const ri = w.execTok.indexOf("run");
                     if (ri >= 0) {
-                        const after = w.execTok.slice(ri + 1);  // run 之后的完成词
-                        // preStr = run 之前的词 + run（doneStr 可能已含 run，避免重复）
+                        const after = w.execTok.slice(ri + 1);
                         const preStr = done.slice(0, done.length - w.execTok.length + ri).join(" ") + " run";
-                        // 递归解析子命令（当前编辑词 cur 不变）
                         return resolve(after, cur, preStr);
                     }
                 }
@@ -266,7 +243,6 @@
             }
         }
 
-        // 2. 前缀匹配 → 子命令候选
         if (joined) {
             const nexts = {};
             for (const key in CTREE) {
@@ -290,7 +266,6 @@
             }
         }
 
-        // 3. 模糊搜索命令名
         const query = ((joined ? joined + " " : "") + (cur || "")).trim().toLowerCase();
         let keys = Object.keys(CTREE);
         if (query) {
@@ -345,7 +320,7 @@
         const cur = editingFlag ? (tokens[tokens.length - 1] || "") : "";
 
         const res = resolve(done, cur, "");
-        if (!res) return; // resolve 已渲染（命令名/子命令候选）
+        if (!res) return;
 
         const { cmd, w, key } = res;
         panelTitle.textContent = "⛏ " + key;
@@ -359,14 +334,12 @@
         }
 
         const p = cmd.p[w.idx];
-        // 选择器子状态：cur 以 @ 开头
         if (/^@/.test(cur) && (p.t === "selector" || p.t === "dest" || p.t === "exec")) {
             cands = selCands(cur);
         } else {
             cands = paramCands(p, cur);
         }
 
-        // 文本类无候选时的提示
         if (!cands.length) {
             let tip;
             if (p.t === "message" || p.t === "text") tip = "✏ 自由输入" + (p.n ? "：" + p.n : "") + (p.d ? "（" + p.d + "）" : "") + "，输完空格即可";
@@ -381,7 +354,6 @@
         renderCands();
     }
 
-    // 点击候选 → 替换整个输入栏
     cmdList.addEventListener("click", e => {
         const btn = e.target.closest(".cmd-btn");
         if (!btn) return;
@@ -400,7 +372,6 @@
     });
 
     // ---------- 复制 ----------
-    // 复制成功后清空输入栏，回到初始候选
     function clearAfterCopy() {
         cmdInput.value = "";
         compute();
@@ -429,92 +400,13 @@
     }
     btnCopy.addEventListener("click", copyInput);
 
-    // ---------- 透明度设置 ----------
-    function applyBallAlpha(pct) { ball.style.opacity = String(pct / 100); ballAlphaVal.textContent = pct + "%"; }
-    function applyPanelAlpha(pct) {
-        document.documentElement.style.setProperty("--panel-alpha", String(pct / 100));
-        panelAlphaVal.textContent = pct + "%";
-    }
-    ballAlpha.addEventListener("input", () => { applyBallAlpha(+ballAlpha.value); save(K.ballA, ballAlpha.value); });
-    panelAlpha.addEventListener("input", () => { applyPanelAlpha(+panelAlpha.value); save(K.panelA, panelAlpha.value); });
-
+    // ---------- 设置 ----------
     function openSettings() { settingsModal.classList.add("open"); }
     function closeSettings() { settingsModal.classList.remove("open"); }
     btnSettings.addEventListener("click", openSettings);
     btnCloseSettings.addEventListener("click", closeSettings);
     settingsModal.addEventListener("click", e => { if (e.target === settingsModal) closeSettings(); });
 
-    // ---------- 大窗口 ----------
-    function togglePanel() {
-        panelOpen = !panelOpen;
-        if (panelOpen) { panel.classList.add("open"); compute(); }
-        else { panel.classList.remove("open"); cmdInput.blur(); }
-    }
-
-    // ---------- 悬浮球拖动 ----------
-    let dragging = false, moved = false, startX = 0, startY = 0, origX = 0, origY = 0;
-
-    function setBallPos(x, y) {
-        const w = ball.offsetWidth, h = ball.offsetHeight;
-        const vw = window.innerWidth, vh = window.innerHeight;
-        ball.style.left = Math.min(Math.max(x, 8), vw - w - 8) + "px";
-        ball.style.top = Math.min(Math.max(y, 8), vh - h - 8) + "px";
-        ball.style.right = "auto";
-    }
-    function saveBallPos() {
-        const r = ball.getBoundingClientRect();
-        save(K.pos, JSON.stringify({ x: r.left, y: r.top }));
-    }
-    function snapToEdge() {
-        const r = ball.getBoundingClientRect();
-        const targetX = (r.left + r.width / 2) < window.innerWidth / 2 ? 8 : window.innerWidth - r.width - 8;
-        ball.classList.add("snapping");
-        setBallPos(targetX, r.top);
-        setTimeout(() => ball.classList.remove("snapping"), 240);
-    }
-
-    ball.addEventListener("pointerdown", e => {
-        e.preventDefault();
-        try { ball.setPointerCapture(e.pointerId); } catch (err) { }
-        dragging = true; moved = false;
-        startX = e.clientX; startY = e.clientY;
-        const r = ball.getBoundingClientRect();
-        origX = r.left; origY = r.top;
-    });
-    ball.addEventListener("pointermove", e => {
-        if (!dragging) return;
-        const dx = e.clientX - startX, dy = e.clientY - startY;
-        if (!moved && Math.sqrt(dx * dx + dy * dy) > 8) moved = true;
-        if (moved) setBallPos(origX + dx, origY + dy);
-    });
-    function onBallUp() {
-        if (!dragging) return;
-        dragging = false;
-        if (moved) { snapToEdge(); saveBallPos(); }
-        else togglePanel();
-    }
-    ball.addEventListener("pointerup", onBallUp);
-    ball.addEventListener("pointercancel", () => { dragging = false; });
-
-    function clampBall() {
-        if (dragging) return;
-        const r = ball.getBoundingClientRect();
-        setBallPos(r.left, r.top);
-        saveBallPos();
-    }
-    window.addEventListener("resize", clampBall);
-    if (window.visualViewport) window.visualViewport.addEventListener("resize", clampBall);
-
     // ---------- 初始化 ----------
-    (function init() {
-        const bA = Math.min(100, Math.max(20, parseInt(load(K.ballA, "100"), 10) || 100));
-        const pA = Math.min(100, Math.max(20, parseInt(load(K.panelA, "95"), 10) || 95));
-        ballAlpha.value = bA; panelAlpha.value = pA;
-        applyBallAlpha(bA); applyPanelAlpha(pA);
-        try {
-            const p = JSON.parse(load(K.pos, "null"));
-            if (p && typeof p.x === "number") setBallPos(p.x, p.y);
-        } catch (e) { }
-        compute();
-    })();
+    compute();
 })();

@@ -15,11 +15,12 @@
     <!-- 背景装饰 -->
     <div id="bg-pattern"></div>
 
-    <!-- 大窗口 -->
-    <div id="panel">
+    <!-- 主界面（全屏，无悬浮球） -->
+    <div id="panel" class="open">
         <div id="panel-header">
             <span class="panel-title">⛏ 命令助手</span>
             <span id="match-count">0 条命令</span>
+            <button id="btn-settings" class="head-btn" title="设置">⚙</button>
         </div>
 
         <!-- 参数槽（当前命令的参数结构） -->
@@ -28,17 +29,11 @@
         <!-- 命令列表（自动补全候选） -->
         <div id="cmd-list"></div>
 
-        <!-- 底部：设置 + 输入栏 + 复制 -->
+        <!-- 底部：输入栏 + 复制 -->
         <div id="panel-footer">
-            <button id="btn-settings" class="foot-btn" title="设置">⚙</button>
             <input type="text" id="cmd-input" placeholder="输入关键字，如 s / give / tp" autocomplete="off" autocapitalize="off" spellcheck="false">
             <button id="btn-copy" class="foot-btn copy" title="复制到剪贴板">复制</button>
         </div>
-    </div>
-
-    <!-- 悬浮球（永远在最上层） -->
-    <div id="float-ball" title="点击展开/收起，拖动移动">
-        <span class="ball-icon">⌘</span>
     </div>
 
     <!-- 设置弹窗 -->
@@ -46,25 +41,39 @@
         <div class="settings-box">
             <h3>⚙ 设置</h3>
 
+            <!-- 横屏/竖屏切换 -->
             <div class="setting-row">
-                <label>悬浮图标透明度</label>
-                <div class="slider-row">
-                    <input type="range" id="ball-alpha" min="20" max="100" value="100">
-                    <span class="slider-val" id="ball-alpha-val">100%</span>
+                <label>屏幕方向</label>
+                <div class="seg-group">
+                    <button class="seg-btn" data-orient="auto">自动</button>
+                    <button class="seg-btn" data-orient="portrait">竖屏</button>
+                    <button class="seg-btn" data-orient="landscape">横屏</button>
                 </div>
             </div>
 
+            <!-- 检查更新 -->
             <div class="setting-row">
-                <label>大窗口透明度</label>
-                <div class="slider-row">
-                    <input type="range" id="panel-alpha" min="20" max="100" value="95">
-                    <span class="slider-val" id="panel-alpha-val">95%</span>
-                </div>
+                <label>应用更新</label>
+                <button id="btn-check-update" class="mc-btn small">检查更新</button>
+                <div id="update-status" class="setting-tip"></div>
             </div>
 
-            <div class="setting-tip">透明度设置自动保存，重开应用后依然生效</div>
+            <!-- 版本信息 -->
+            <div class="setting-tip">命令助手 v1.2 · PWA 离线可用</div>
 
             <button id="btn-close-settings" class="mc-btn">完成</button>
+        </div>
+    </div>
+
+    <!-- 更新提示弹窗 -->
+    <div id="update-modal">
+        <div class="settings-box">
+            <h3>🔄 发现新版本</h3>
+            <p id="update-info" class="setting-tip"></p>
+            <div class="seg-group">
+                <button id="btn-update-now" class="mc-btn">立即更新</button>
+                <button id="btn-update-later" class="seg-btn">稍后</button>
+            </div>
         </div>
     </div>
 
@@ -75,12 +84,105 @@
     <script src="js/ctree.js"></script>
     <script src="js/app.js"></script>
     <script>
-        // 注册 Service Worker
+        // 注册 Service Worker + 更新检测
         if ('serviceWorker' in navigator) {
+            let newSW = null;
+
             window.addEventListener('load', function() {
-                navigator.serviceWorker.register('./service-worker.js').catch(function(err) {
-                    console.log('SW 注册失败:', err);
+                navigator.serviceWorker.register('./service-worker.js').then(function(registration) {
+                    // 有更新时提示
+                    registration.addEventListener('updatefound', function() {
+                        newSW = registration.installing;
+                        if (newSW) {
+                            newSW.addEventListener('statechange', function() {
+                                if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+                                    // 弹出更新提示
+                                    document.getElementById('update-info').textContent =
+                                        '新版本已下载，重启应用后生效';
+                                    document.getElementById('update-modal').classList.add('open');
+                                }
+                            });
+                        }
+                    });
                 });
+
+                // 手动检查更新
+                document.getElementById('btn-check-update').addEventListener('click', function() {
+                    const statusEl = document.getElementById('update-status');
+                    statusEl.textContent = '检查中...';
+                    if (navigator.serviceWorker.controller) {
+                        navigator.serviceWorker.controller.postMessage({ type: 'CHECK_UPDATE' });
+                    }
+                    navigator.serviceWorker.getRegistration().then(function(reg) {
+                        if (reg) {
+                            reg.update().then(function() {
+                                setTimeout(function() {
+                                    if (reg.waiting) {
+                                        statusEl.textContent = '发现新版本！';
+                                        document.getElementById('update-info').textContent =
+                                            '新版本已下载，重启应用后生效';
+                                        document.getElementById('update-modal').classList.add('open');
+                                    } else {
+                                        statusEl.textContent = '已是最新版';
+                                    }
+                                }, 1500);
+                            });
+                        }
+                    });
+                });
+
+                // 立即更新
+                document.getElementById('btn-update-now').addEventListener('click', function() {
+                    if (newSW) {
+                        newSW.postMessage({ type: 'SKIP_WAITING' });
+                        location.reload();
+                    } else {
+                        location.reload();
+                    }
+                });
+
+                // 稍后
+                document.getElementById('btn-update-later').addEventListener('click', function() {
+                    document.getElementById('update-modal').classList.remove('open');
+                });
+            });
+
+            // SW 激活后刷新
+            navigator.serviceWorker.addEventListener('controllerchange', function() {
+                // 不自动刷新，让用户自己决定
+            });
+        }
+
+        // 横屏/竖屏切换逻辑
+        document.addEventListener('DOMContentLoaded', function() {
+            const savedOrient = localStorage.getItem('mch.orientation') || 'auto';
+            applyOrientation(savedOrient);
+            updateSegButtons(savedOrient);
+
+            document.querySelectorAll('.seg-btn[data-orient]').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    const orient = btn.dataset.orient;
+                    localStorage.setItem('mch.orientation', orient);
+                    applyOrientation(orient);
+                    updateSegButtons(orient);
+                });
+            });
+        });
+
+        function applyOrientation(orient) {
+            const html = document.documentElement;
+            html.classList.remove('orient-auto', 'orient-portrait', 'orient-landscape');
+            html.classList.add('orient-' + orient);
+
+            // iOS PWA 无法强制锁定方向，但可以通过 CSS 提示
+            if (orient !== 'auto') {
+                // 用户需要在系统层面旋转设备
+            }
+        }
+
+        function updateSegButtons(current) {
+            document.querySelectorAll('.seg-btn[data-orient]').forEach(function(btn) {
+                btn.classList.toggle('active', btn.dataset.orient === current);
             });
         }
     </script>
