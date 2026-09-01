@@ -1,0 +1,102 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 安装 Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: 安装依赖
+      run: npm install
+
+    - name: 同步 Capacitor iOS 项目
+      run: |
+        npx cap add ios || true
+        npx cap sync ios
+        cd ios/App && pod install && cd ../..
+
+    - name: 查看可用 Xcode 版本
+      run: |
+        ls /Applications/ | grep Xcode
+        xcode-select -p
+        xcodebuild -version
+
+    - name: 读取应用配置
+      id: config
+      run: |
+        APP_NAME=$(node -e "console.log(require('./capacitor.config.json').appName)")
+        APP_ID=$(node -e "console.log(require('./capacitor.config.json').appId)")
+        echo "appName=$APP_NAME" >> $GITHUB_OUTPUT
+        echo "appId=$APP_ID" >> $GITHUB_OUTPUT
+        echo "应用名: $APP_NAME"
+        echo "Bundle ID: $APP_ID"
+
+    - name: 编译 iOS 应用（Ad-hoc 签名，全能签/轻松签重签兼容）
+      run: |
+        xcodebuild -workspace "ios/App/App.xcworkspace" \
+          -scheme "App" \
+          -sdk iphoneos \
+          -configuration Release \
+          -derivedDataPath build \
+          CODE_SIGN_IDENTITY="-" \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGNING_ALLOWED=YES \
+          AD_HOC_CODE_SIGNING_ALLOWED=YES \
+          PRODUCT_BUNDLE_IDENTIFIER="${{ steps.config.outputs.appId }}" \
+          DEVELOPMENT_TEAM="" \
+          PROVISIONING_PROFILE_SPECIFIER="" \
+          PROVISIONING_PROFILE=""
+
+    - name: 打包 IPA
+      run: |
+        APP_ROOT="build/Build/Products/Release-iphoneos"
+        APP_DIR=$(ls -d "$APP_ROOT"/*.app | head -n 1)
+        echo "App 目录: $APP_DIR"
+
+        # 确保可执行权限
+        EXE_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_DIR/Info.plist")
+        chmod +x "$APP_DIR/$EXE_NAME"
+        if [ -d "$APP_DIR/Frameworks" ]; then
+          find "$APP_DIR/Frameworks" -type f \( -name "*.dylib" -o -perm -u+x -name "*" \) -exec chmod +x {} \; 2>/dev/null || true
+        fi
+
+        # 清除 macOS 扩展属性
+        xattr -rc "$APP_DIR" 2>/dev/null || true
+
+        # 打包（英文文件名 + 无额外属性）
+        rm -rf Payload command-helper.ipa
+        mkdir -p Payload
+        cp -R "$APP_DIR" Payload/
+        zip -r -X -q command-helper.ipa Payload -x "*.DS_Store" "__MACOSX*"
+
+        # 结构自检
+        unzip -l command-helper.ipa | head -n 8
+        ls -lh command-helper.ipa
+
+    - name: 上传 IPA 到 Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: "命令助手-ios"
+        path: command-helper.ipa
+        retention-days: 30
+
+    - name: 创建 Release（仅 tag 触发）
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: command-helper.ipa
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
