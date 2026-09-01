@@ -1,0 +1,39 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'www/**'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 检查 www 目录
+      run: ls -la www/
+
+    - name: 配置 Pages
+      uses: actions/configure-pages@v5
+
+    - name: 上传 www 为 Pages 产物
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: www
+
+    - name: 部署到 GitHub Pages
+      uses: actions/deploy-pages@v4
