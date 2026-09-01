@@ -26,14 +26,14 @@ jobs:
       run: |
         npx cap add ios || true
         npx cap sync ios
-        # ★ 修改 Podfile：注释掉 use_frameworks! 让 Pods 静态编译
-        # 这样 Frameworks/ 目录不会出现在 IPA 里，爱思助手只签主 App 就行
+        # ★ 修改 Podfile：use_frameworks! 改成 use_modular_headers!
+        # 让 Pods 静态编译（无 Frameworks/dylib），同时生成 Swift 模块映射
         cd ios/App
         echo "--- 修改前 Podfile ---"
         cat Podfile
         echo ""
-        # 注释掉 use_frameworks! 行
-        sed -i '' 's/^use_frameworks!/# use_frameworks!/' Podfile
+        # 替换 use_frameworks! 为 use_modular_headers!
+        sed -i '' 's/^use_frameworks!/use_modular_headers!/' Podfile
         echo "--- 修改后 Podfile ---"
         cat Podfile
         echo ""
