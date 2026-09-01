@@ -22,23 +22,11 @@ jobs:
     - name: 安装依赖
       run: npm install
 
-    - name: 同步 Capacitor iOS 项目（静态链接 Pods）
+    - name: 同步 Capacitor iOS 项目
       run: |
         npx cap add ios || true
         npx cap sync ios
-        # ★ 修改 Podfile：use_frameworks! 改成 use_modular_headers!
-        # 让 Pods 静态编译（无 Frameworks/dylib），同时生成 Swift 模块映射
-        cd ios/App
-        echo "--- 修改前 Podfile ---"
-        cat Podfile
-        echo ""
-        # 替换 use_frameworks! 为 use_modular_headers!
-        sed -i '' 's/^use_frameworks!/use_modular_headers!/' Podfile
-        echo "--- 修改后 Podfile ---"
-        cat Podfile
-        echo ""
-        pod install
-        cd ../..
+        cd ios/App && pod install && cd ../..
 
     - name: 查看可用 Xcode 版本
       run: |
