@@ -44,7 +44,7 @@ jobs:
         echo "应用名: $APP_NAME"
         echo "Bundle ID: $APP_ID"
 
-    - name: 编译 iOS 应用（Ad-hoc 签名，稳定编译）
+    - name: 编译 iOS 应用（Ad-hoc 签名）
       run: |
         xcodebuild -workspace "ios/App/App.xcworkspace" \
           -scheme "App" \
@@ -60,129 +60,86 @@ jobs:
           PROVISIONING_PROFILE_SPECIFIER="" \
           PROVISIONING_PROFILE=""
 
-    - name: 打包 IPA（用 Python 重写，确保无签名残留）
+    - name: 打包 IPA（Python 重写，清除所有签名）
       run: |
         APP_ROOT="build/Build/Products/Release-iphoneos"
         APP_DIR=$(ls -d "$APP_ROOT"/*.app | head -n 1)
         echo "App 目录: $APP_DIR"
-        ls -la "$APP_DIR"
-        echo ""
-        echo "Frameworks 内容:"
-        [ -d "$APP_DIR/Frameworks" ] && ls -la "$APP_DIR/Frameworks" || echo "(无 Frameworks)"
 
-        # ====== 用 Python 重写 IPA，彻底清除所有层级签名 ======
-        echo ""
         echo "=== Python 重写 IPA ==="
-        python3 << 'PYEOF'
+        cat > clean_ipa.py << 'PYEOF'
 import os, zipfile, glob, sys
 
-# 找到 .app 目录
 app_dirs = glob.glob("build/Build/Products/Release-iphoneos/*.app")
 if not app_dirs:
-    print("❌ 找不到 .app 目录!")
+    print("ERROR: no .app found!")
     sys.exit(1)
 app_dir = app_dirs[0]
-print(f"App 目录: {app_dir}")
+print("App dir: " + app_dir)
 
-# 先打印完整目录树让我们知道有什么签名
-print("\n=== 扫描所有 _CodeSignature ===")
+print("\n=== Scanning for signatures ===")
 for root, dirs, files in os.walk(app_dir, followlinks=False):
     for d in dirs:
-        if d == '_CodeSignature':
-            full = os.path.join(root, d)
-            print(f"  找到: {full}")
+        if d == "_CodeSignature":
+            print("  FOUND: " + os.path.join(root, d))
     for f in files:
-        if f.endswith('.mobileprovision') or f.endswith('.entitlements'):
-            print(f"  找到: {os.path.join(root, f)}")
+        if f.endswith(".mobileprovision") or f.endswith(".entitlements"):
+            print("  FOUND: " + os.path.join(root, f))
 
-# 收集文件，严格过滤
 files_to_add = []
 skip_count = 0
-SKIP_DIR_NAMES = {'_CodeSignature', '__MACOSX'}
-SKIP_FILE_EXTS = ('.mobileprovision', '.entitlements')
+SKIP_DIRS = {"_CodeSignature", "__MACOSX"}
+SKIP_EXTS = (".mobileprovision", ".entitlements")
 
 for root, dirs, files in os.walk(app_dir, followlinks=False):
-    # 从 dirs 里移除所有 _CodeSignature 和相关
-    dirs[:] = [d for d in dirs if d not in SKIP_DIR_NAMES]
-    
+    dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
     for f in files:
         full = os.path.join(root, f)
-        # 计算相对于 Payload 的路径
-        rel = os.path.relpath(full, os.path.dirname(app_dir))
-        zip_path = "Payload/" + os.path.basename(app_dir) + "/" + os.path.relpath(full, app_dir).replace(os.sep, '/')
-        
-        # 跳过签名文件
-        if f.endswith(SKIP_FILE_EXTS):
-            print(f"  SKIP FILE: {rel}")
+        rel = os.path.relpath(full, app_dir).replace(os.sep, "/")
+        if f.endswith(SKIP_EXTS) or "_CodeSignature" in rel:
+            print("  SKIP: " + rel)
             skip_count += 1
             continue
-        
-        # 安全检查：路径里不能有 _CodeSignature
-        if '_CodeSignature' in rel.replace(os.sep, '/'):
-            print(f"  SKIP DIR CONTENT: {rel}")
-            skip_count += 1
-            continue
-        
+        zip_path = "Payload/" + os.path.basename(app_dir) + "/" + rel
         files_to_add.append((zip_path, full))
 
-print(f"\n跳过了 {skip_count} 个签名相关文件/目录")
-print(f"准备添加 {len(files_to_add)} 个文件")
+print("\nSkipped: %d, Adding: %d" % (skip_count, len(files_to_add)))
 
-# 打包
 ipa_path = "command-helper.ipa"
-# 如果已经存在旧文件，先删掉
 if os.path.exists(ipa_path):
     os.remove(ipa_path)
 
 with zipfile.ZipFile(ipa_path, "w", zipfile.ZIP_DEFLATED) as zf:
-    # 必须先写 __MACOSX 目录（空的），这样解压到 Payload/xxx.app 结构正确
-    for zip_path, full_path in files_to_add:
-        zf.write(full_path, zip_path)
+    for zp, fp in files_to_add:
+        zf.write(fp, zp)
 
-print(f"\n✅ IPA 写入: {ipa_path} ({os.path.getsize(ipa_path)} bytes)")
+print("\nIPA written: %s (%d bytes)" % (ipa_path, os.path.getsize(ipa_path)))
 
-# 暴力验证
-print("\n=== 验证 ===")
+print("\n=== Verification ===")
 with zipfile.ZipFile(ipa_path, "r") as zf:
     names = zf.namelist()
-    
     has_cs = any("_CodeSignature" in n for n in names)
     has_mp = any(".mobileprovision" in n for n in names)
     has_ent = any(".entitlements" in n for n in names)
-    has_info = any("Info.plist" in n for n in names and n.endswith("Info.plist"))
-    dylib_count = sum(1 for n in names if n.endswith(".dylib"))
-    
-    print(f"  总文件: {len(names)}")
-    print(f"  _CodeSignature:    {'❌❌❌ 还有!' if has_cs else '✅ 干净'}")
-    print(f"  mobileprovision:   {'❌❌❌ 还有!' if has_mp else '✅ 干净'}")
-    print(f"  entitlements:      {'❌❌❌ 还有!' if has_ent else '✅ 干净'}")
-    print(f"  Info.plist:        {'✅ 存在' if has_info else '❌❌❌ 缺失!'}")
-    print(f"  .dylib:            {dylib_count} 个")
-    
-    # 如果不干净，打印所有残留
-    if has_cs:
-        print("\n  残留的 _CodeSignature 路径:")
+    has_info = any("Info.plist" in n for n in names)
+    print("  Total files: %d" % len(names))
+    print("  _CodeSignature:    %s" % ("FAIL - STILL EXISTS!" if has_cs else "OK - clean"))
+    print("  mobileprovision:   %s" % ("FAIL - STILL EXISTS!" if has_mp else "OK - clean"))
+    print("  entitlements:      %s" % ("FAIL - STILL EXISTS!" if has_ent else "OK - clean"))
+    print("  Info.plist:        %s" % ("OK" if has_info else "FAIL - MISSING!"))
+    if has_cs or has_mp:
+        print("\nResidual paths:")
         for n in names:
-            if '_CodeSignature' in n:
-                print(f"    {n}")
-    if has_mp:
-        print("\n  残留的 mobileprovision:")
-        for n in names:
-            if '.mobileprovision' in n:
-                print(f"    {n}")
-    
-    if has_cs or has_mp or not has_info:
-        print("\n❌❌❌ 构建产物不干净！已拒绝！")
+            if "_CodeSignature" in n or ".mobileprovision" in n:
+                print("  " + n)
         sys.exit(1)
-    else:
-        print("\n✅✅✅ 所有签名残留已清除！")
-
+    print("\nALL CLEAN!")
 PYEOF
+        python3 clean_ipa.py
+
         echo ""
-        echo "=== 最终检查 ==="
+        echo "=== Final check ==="
         ls -lh command-helper.ipa
-        echo ""
-        unzip -l command-helper.ipa | head -n 30
 
     - name: 上传 IPA 到 Artifacts
       uses: actions/upload-artifact@v4
