@@ -22,11 +22,23 @@ jobs:
     - name: 安装依赖
       run: npm install
 
-    - name: 同步 Capacitor iOS 项目
+    - name: 同步 Capacitor iOS 项目（静态链接 Pods）
       run: |
         npx cap add ios || true
         npx cap sync ios
-        cd ios/App && pod install && cd ../..
+        # ★ 修改 Podfile：注释掉 use_frameworks! 让 Pods 静态编译
+        # 这样 Frameworks/ 目录不会出现在 IPA 里，爱思助手只签主 App 就行
+        cd ios/App
+        echo "--- 修改前 Podfile ---"
+        cat Podfile
+        echo ""
+        # 注释掉 use_frameworks! 行
+        sed -i '' 's/^use_frameworks!/# use_frameworks!/' Podfile
+        echo "--- 修改后 Podfile ---"
+        cat Podfile
+        echo ""
+        pod install
+        cd ../..
 
     - name: 查看可用 Xcode 版本
       run: |
@@ -116,7 +128,7 @@ jobs:
         echo "文件大小:"
         ls -lh command-helper.ipa
         echo "zip 内容检查:"
-        unzip -l command-helper.ipa | head -n 20
+        unzip -l command-helper.ipa | head -n 25
         echo ""
         if unzip -l command-helper.ipa | grep -qi 'codesignature'; then
           echo "❌ 仍有 _CodeSignature！"
@@ -129,6 +141,16 @@ jobs:
           exit 1
         else
           echo "✅ 无 mobileprovision"
+        fi
+        if unzip -l command-helper.ipa | grep -qi '\.dylib'; then
+          echo "❌ 仍有 .dylib（Frameworks 动态库）！爱思助手可能签不动"
+          unzip -l command-helper.ipa | grep -i dylib
+        else
+          echo "✅ 无 .dylib（Pods 已静态编译）"
+        fi
+        if unzip -l command-helper.ipa | grep -qi '\.framework/'; then
+          echo "⚠️ 仍有 .framework 目录，检查内容:"
+          unzip -l command-helper.ipa | grep -i framework
         fi
 
     - name: 上传 IPA 到 Artifacts
