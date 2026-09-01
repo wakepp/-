@@ -44,19 +44,23 @@ jobs:
         echo "应用名: $APP_NAME"
         echo "Bundle ID: $APP_ID"
 
-    - name: 编译 iOS 应用（完全无签名，兼容第三方工具重签）
+    - name: 编译 iOS 应用（Ad-hoc 签名，稳定编译）
       run: |
         xcodebuild -workspace "ios/App/App.xcworkspace" \
           -scheme "App" \
           -sdk iphoneos \
           -configuration Release \
           -derivedDataPath build \
+          CODE_SIGN_IDENTITY="-" \
           CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGNING_ALLOWED=NO \
-          CODE_SIGN_IDENTITY="" \
-          PRODUCT_BUNDLE_IDENTIFIER="${{ steps.config.outputs.appId }}"
+          CODE_SIGNING_ALLOWED=YES \
+          AD_HOC_CODE_SIGNING_ALLOWED=YES \
+          PRODUCT_BUNDLE_IDENTIFIER="${{ steps.config.outputs.appId }}" \
+          DEVELOPMENT_TEAM="" \
+          PROVISIONING_PROFILE_SPECIFIER="" \
+          PROVISIONING_PROFILE=""
 
-    - name: 打包 IPA（清除所有签名残留）
+    - name: 打包 IPA（彻底清除签名残留）
       run: |
         APP_ROOT="build/Build/Products/Release-iphoneos"
         APP_DIR=$(ls -d "$APP_ROOT"/*.app | head -n 1)
@@ -67,19 +71,21 @@ jobs:
         mkdir -p Payload
         cp -R "$APP_DIR" Payload/
 
-        # ★ 关键：清除所有签名残留，让爱思/AltStore 能干净重签
+        # ★ 彻底清除所有签名残留
         echo "--- 清除签名残留 ---"
-        # 清除所有 _CodeSignature 目录
-        find Payload -name '_CodeSignature' -type d -exec rm -rf {} + 2>/dev/null || true
-        # 清除所有 embedded.mobileprovision
+        find Payload -name '_CodeSignature' -exec rm -rf {} + 2>/dev/null || true
         find Payload -name '*.mobileprovision' -delete 2>/dev/null || true
-        # 清除所有 .entitlements
         find Payload -name '*.entitlements' -delete 2>/dev/null || true
-        # 清除可执行文件上的旧签名
+
+        # 用 codesign 强制移除所有签名
         if command -v codesign &>/dev/null; then
-          find Payload -type f -name '*.dylib' -exec codesign --remove-signature {} \; 2>/dev/null || true
-          find Payload -type f -perm +111 -exec codesign --remove-signature {} \; 2>/dev/null || true
+          echo "移除代码签名..."
+          find Payload -type f \( -name '*.dylib' -o -name '*.framework' -o -perm +111 \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
+            codesign --remove-signature "$f" 2>/dev/null || true
+          done
           codesign --remove-signature Payload/*.app 2>/dev/null || true
+          # 再删一次可能生成的新 _CodeSignature
+          find Payload -name '_CodeSignature' -exec rm -rf {} + 2>/dev/null || true
         fi
 
         # 确保可执行权限
@@ -97,12 +103,21 @@ jobs:
         zip -r -X -q command-helper.ipa Payload -x "*.DS_Store" "__MACOSX*"
 
         # 结构自检
-        unzip -l command-helper.ipa | head -n 8
+        unzip -l command-helper.ipa | head -n 10
         ls -lh command-helper.ipa
 
-        # 验证无签名残留
-        echo "--- 验证签名残留（应为空）---"
-        unzip -l command-helper.ipa | grep -i 'codesignature\|mobileprovision\|entitlements' || echo "无残留 ✓"
+        echo "--- 签名残留检查 ---"
+        if unzip -l command-helper.ipa | grep -qi 'codesignature'; then
+          echo "⚠️ 仍有 _CodeSignature 残留！"
+          unzip -l command-helper.ipa | grep -i codesignature
+        else
+          echo "✓ 无 _CodeSignature"
+        fi
+        if unzip -l command-helper.ipa | grep -qi 'mobileprovision'; then
+          echo "⚠️ 仍有 mobileprovision！"
+        else
+          echo "✓ 无 mobileprovision"
+        fi
 
     - name: 上传 IPA 到 Artifacts
       uses: actions/upload-artifact@v4
